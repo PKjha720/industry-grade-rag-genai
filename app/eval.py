@@ -1,7 +1,7 @@
 import time
 import yaml
 from statistics import mean, median, mode
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple,Optional
 
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -73,14 +73,28 @@ def dedupe_by_source_page(docs: List[Document]) -> List[Document]:
     return unique
 
 
-def build_bm25_retriever_from_chroma(vectordb: Chroma, k: int, allowed_sources: list[str] | None = None) -> BM25Retriever:
+def _norm(p: str) -> str:
+    # Normalize Windows and Linux paths to the same format
+    return (p or "").replace("\\", "/")
+
+def build_bm25_retriever_from_chroma(vectordb, k: int, allowed_sources: Optional[List[str]] = None):
     raw = vectordb.get()
-    docs = []
-    for text, meta in zip(raw["documents"], raw["metadatas"]):
-        src = meta.get("source")
-        if allowed_sources is not None and src not in allowed_sources:
+    docs: List[Document] = []
+
+    allowed = None
+    if allowed_sources is not None:
+        allowed = set(_norm(x) for x in allowed_sources)
+
+    for text, meta in zip(raw.get("documents", []), raw.get("metadatas", [])):
+        src = _norm(meta.get("source", ""))
+        if allowed is not None and src not in allowed:
             continue
         docs.append(Document(page_content=text, metadata=meta))
+
+    # ✅ Empty guard: if nothing matches filter, return a retriever that returns []
+    if len(docs) == 0:
+        
+        return None
 
     bm25 = BM25Retriever.from_documents(docs)
     bm25.k = k
@@ -114,14 +128,15 @@ def run_one(question: str, mode: str, cfg, vectordb: Chroma, llm: ChatGroq, rera
 
     TOP_K = cfg.retrieval.k
     CANDIDATES = 12
-
+    # Normalize path to forward slash (works on Windows + Linux)
+    curriculum_path = "data/dl-curriculum.pdf"
     allowed_sources = None
     if mode == "curriculum_only":
-        allowed_sources = ["data\\dl-curriculum.pdf"]
+        allowed_sources = [curriculum_path]
     # Build search_kwargs
     search_kwargs = {"k": cfg.retrieval.k}
     if mode == "curriculum_only":
-        search_kwargs["filter"] = {"source": "data\\dl-curriculum.pdf"}
+        search_kwargs["filter"] = {"source": curriculum_path}
 
     # Vector retriever (MMR)
     vector_retriever = vectordb.as_retriever(
@@ -134,7 +149,9 @@ def run_one(question: str, mode: str, cfg, vectordb: Chroma, llm: ChatGroq, rera
 
     start = time.time()
     vector_docs = vector_retriever.invoke(question)
-    bm25_docs = bm25.invoke(question)
+    bm25_docs = []
+    if bm25 is not None:
+        bm25_docs = bm25.invoke(question)
 
     candidates = dedupe_by_source_page(vector_docs + bm25_docs)
 
