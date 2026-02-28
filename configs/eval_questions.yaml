@@ -1,0 +1,28 @@
+questions:
+  - id: "iso_6_1_1"
+    question: "What does clause 6.1.1 talk about?"
+    mode: "all"     # all | curriculum_only
+
+  - id: "iso_4_2"
+    question: "What is requirement 4.2 about?"
+    mode: "all"
+
+  - id: "isms_definition"
+    question: "What is ISMS according to the document?"
+    mode: "all"
+
+  - id: "curriculum_topics"
+    question: "What topics are covered in the curriculum?"
+    mode: "curriculum_only"
+
+  - id: "iso_risks_opportunities"
+    question: "What risks and opportunities does ISO 27001 require to be addressed in planning?"
+    mode: "all"
+
+  - id: "iso_interested_parties"
+    question: "Who are 'interested parties' and why do they matter in ISO 27001?"
+    mode: "all"
+
+  - id: "curriculum_attention"
+    question: "Explain attention mechanisms mentioned in the curriculum."
+    mode: "curriculum_only"

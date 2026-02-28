@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+
+# Vector DB
+.chroma_db/
+
+# Logs
+logs/
+
+# OS
+.DS_Store
+Thumbs.db

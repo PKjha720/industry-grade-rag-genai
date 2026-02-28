@@ -1,0 +1,20 @@
+chunking:
+  chunk_size: 900
+  chunk_overlap: 150
+
+embedding:
+  provider: "hf"
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+
+llm:
+  provider: "groq"
+  model: "llama-3.1-8b-instant"
+
+vectorstore:
+  provider: "chroma"
+  persist_dir: ".chroma_db"
+  collection: "docs"
+
+retrieval:
+  k: 4
+  
