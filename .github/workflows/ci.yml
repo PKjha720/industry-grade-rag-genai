@@ -22,6 +22,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Ingestion
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MIN_CITATION_RATE: "0.95"
+          MAX_MEDIAN_LAT_MS: "9000"
         run: |
           python -m app.ingest
 

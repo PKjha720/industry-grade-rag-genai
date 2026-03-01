@@ -2,7 +2,7 @@ import time
 import yaml
 from statistics import mean, median, mode
 from typing import Dict, Any, List, Tuple,Optional
-
+import os
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -234,6 +234,23 @@ def main():
 
     latencies = [r["latency_ms"] for _, r in results]
     citation_rate = sum(1 for _, r in results if r["citation_ok"]) / len(results)
+    median_latency = int(median(latencies))
+
+    # ---- CI quality gate thresholds ----
+    MIN_CITATION_RATE = float(os.getenv("MIN_CITATION_RATE", "0.95"))   # 95%
+    MAX_MEDIAN_LAT_MS = int(os.getenv("MAX_MEDIAN_LAT_MS", "9000"))     # 9s
+
+    # compute these from your existing summary values
+    # assuming you already have: citation_rate, latencies list, median_latency
+    if citation_rate < MIN_CITATION_RATE:
+        raise SystemExit(
+            f"CI gate failed: citation_rate {citation_rate:.2%} < {MIN_CITATION_RATE:.0%}"
+        )
+
+    if median_latency > MAX_MEDIAN_LAT_MS:
+        raise SystemExit(
+            f"CI gate failed: median_latency_ms {median_latency} > {MAX_MEDIAN_LAT_MS}"
+        )
 
     print("=== SUMMARY ===")
     print("Questions:", len(results))
@@ -241,6 +258,7 @@ def main():
     print("Latency ms (median):", int(median(latencies)))
     print("Citation compliance rate:", round(citation_rate * 100, 1), "%")
 
+    
 
 if __name__ == "__main__":
     main()
