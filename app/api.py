@@ -4,7 +4,7 @@ from typing import List, Literal, Optional, Dict, Any, Tuple
 from collections import deque
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-
+from statistics import mean
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -16,7 +16,12 @@ from app.config import load_config, require_groq_key
 from app.logger import log_event
 from app.reranker import CrossEncoderReranker
 
+REQ_COUNT = 0
 
+LAT_TOTAL_MS = deque(maxlen=200)
+LAT_RETRIEVAL_MS = deque(maxlen=200)
+LAT_RERANK_MS = deque(maxlen=200)
+LAT_LLM_MS = deque(maxlen=200)
 # ---------------------------
 # Prompt (JSON-only output)
 # ---------------------------
@@ -61,7 +66,12 @@ FIX_PROMPT = ChatPromptTemplate.from_messages([
 # ---------------------------
 # Retrieval helpers
 # ---------------------------
-
+def p95(values):
+    if not values:
+        return 0
+    v = sorted(values)
+    idx = int(0.95 * (len(v) - 1))
+    return v[idx]
 def format_context(docs: List[Document]) -> str:
     """
     Context given to the LLM. We embed citations directly into context lines:
@@ -165,6 +175,7 @@ reranker = CrossEncoderReranker("cross-encoder/ms-marco-MiniLM-L-6-v2")
 request_count = 0
 latency_history = deque(maxlen=100)
 
+
 @app.middleware("http")
 async def metrics_middleware(request, call_next):
     global request_count
@@ -179,13 +190,16 @@ async def metrics_middleware(request, call_next):
 
 @app.get("/metrics")
 def metrics():
-    if latency_history:
-        avg_latency = sum(latency_history) / len(latency_history)
-    else:
-        avg_latency = 0
     return {
-        "total_requests": request_count,
-        "avg_latency_ms_last_100": round(avg_latency, 2)
+        "requests_total": REQ_COUNT,
+        "rolling_window": len(LAT_TOTAL_MS),
+        "latency_ms": {
+            "avg_total": round(mean(LAT_TOTAL_MS), 2) if LAT_TOTAL_MS else 0,
+            "p95_total": round(p95(list(LAT_TOTAL_MS)), 2) if LAT_TOTAL_MS else 0,
+            "avg_retrieval": round(mean(LAT_RETRIEVAL_MS), 2) if LAT_RETRIEVAL_MS else 0,
+            "avg_rerank": round(mean(LAT_RERANK_MS), 2) if LAT_RERANK_MS else 0,
+            "avg_llm": round(mean(LAT_LLM_MS), 2) if LAT_LLM_MS else 0,
+        }
     }
 
 @app.get("/health")
@@ -298,6 +312,14 @@ def ask(req: AskRequest):
     answer_obj = dedupe_citations(answer_obj)
 
     elapsed_ms = int((time.time() - start) * 1000)
+
+    global REQ_COUNT
+    REQ_COUNT += 1
+
+    LAT_TOTAL_MS.append(elapsed_ms)
+    LAT_RETRIEVAL_MS.append(retrieval_time)
+    LAT_RERANK_MS.append(rerank_time)
+    LAT_LLM_MS.append(llm_time)
 
     retrieved_sources = [
         {"source": d.metadata.get("source", "unknown"), "page": d.metadata.get("page", "na")}
