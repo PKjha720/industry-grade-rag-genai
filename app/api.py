@@ -1,7 +1,7 @@
 import json
 import time
 from typing import List, Literal, Optional, Dict, Any, Tuple
-
+from collections import deque
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
@@ -162,6 +162,32 @@ vectordb = Chroma(
 llm = ChatGroq(model=cfg.llm.model, temperature=0)
 reranker = CrossEncoderReranker("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
+request_count = 0
+latency_history = deque(maxlen=100)
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    global request_count
+    start = time.time()
+    response = await call_next(request)
+    duration = (time.time() - start) * 1000
+    request_count += 1
+    latency_history.append(duration)
+    return response
+
+
+
+@app.get("/metrics")
+def metrics():
+    if latency_history:
+        avg_latency = sum(latency_history) / len(latency_history)
+    else:
+        avg_latency = 0
+    return {
+        "total_requests": request_count,
+        "avg_latency_ms_last_100": round(avg_latency, 2)
+    }
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -191,9 +217,11 @@ def ask(req: AskRequest):
     # 3) BM25 retriever (keyword)
     bm25 = build_bm25_retriever_from_chroma(vectordb, k=CANDIDATES, allowed_sources=allowed_sources)
 
+    retrieval_start = time.time()
     # 4) Hybrid retrieve + dedupe + top-k
     vector_docs = vector_retriever.invoke(req.question)
     bm25_docs = bm25.invoke(req.question)
+    retrieval_time = (time.time() - retrieval_start) * 1000
 
 # Merge + dedupe first
     candidates = dedupe_by_source_page(vector_docs + bm25_docs)
@@ -202,6 +230,7 @@ def ask(req: AskRequest):
     if allowed_sources is not None:
         candidates = [d for d in candidates if d.metadata.get("source") in allowed_sources]
 
+    rerank_start = time.time()
 # Always rerank in API (final boss mode)
     if len(candidates) > TOP_K:
         docs = reranker.rerank(req.question, candidates, top_k=TOP_K)
@@ -209,10 +238,13 @@ def ask(req: AskRequest):
         docs = candidates
 
     context = format_context(docs)
-
+    rerank_time = (time.time() - rerank_start) * 1000
     # 5) Call model (JSON-only) + retry once if needed
     chain = PROMPT | llm
+
+    llm_start = time.time()
     answer_msg = chain.invoke({"question": req.question, "context": context})
+    llm_time = (time.time() - llm_start) * 1000
 
     if not json_citation_ok(answer_msg.content):
         fix_chain = FIX_PROMPT | llm
@@ -282,6 +314,9 @@ def ask(req: AskRequest):
         "k": cfg.retrieval.k,
         "retrieved_sources": retrieved_sources,
         "latency_ms": elapsed_ms,
+        "retrieval_ms": round(retrieval_time, 2),
+        "rerank_ms": round(rerank_time, 2),
+        "llm_ms": round(llm_time, 2),
         "reranker": "cross-encoder/ms-marco-MiniLM-L-6-v2",
         "candidates": CANDIDATES,
     })
@@ -290,5 +325,10 @@ def ask(req: AskRequest):
         answer=answer_obj,
         retrieved_sources=retrieved_sources,
         latency_ms=elapsed_ms,
-        model=cfg.llm.model
+        model=cfg.llm.model,
+        timings={
+        "retrieval_ms": round(retrieval_time, 2),
+        "rerank_ms": round(rerank_time, 2),
+        "llm_ms": round(llm_time, 2),
+    }
     )
